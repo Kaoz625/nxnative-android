@@ -46,3 +46,5 @@ draw_barriers	game
 # As Tears of the Kingdom: the terrain's height, blend and hole maps are written by the CPU into textures after they are created. Without these keys they stay zero: holes in the ground and the wrong materials
 tex_flush_upload	on
 tex_dirty_upload	on
+# Pool tables give a finalized texture's ID the dummy instead of making its texture again: about 2.5 GB at the house-to-forest change (upstream PR #1393, open; from HookLink 6c3e36c8)
+pool_skip_retired	on

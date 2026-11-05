@@ -12199,6 +12199,7 @@ void mtl_pool_stats(uint64_t s[POOL_STATS]) {
 // One entry of a pool table, as the walk takes it: the resource ID of what the ID holds (0: nothing of the type, or a texture not made). gone counts IDs without storage, and *dead is set for
 // one whose storage does not exist (yet): one marked gone stays so until it is registered again, which is noted. left / left_req count the textures past limit (what this frame may still
 // make) and those of them a shader read. *transient is set for a view of a retired registration, which goes at the end of this submission. Caller holds g_rmu
+static int pool_skip_retired(void); static uint64_t g_pool_skipped;   // IDs pool_skip_retired gave the dummy (the walk's log)
 static uint64_t pool_entry(int samp, int dtt, int id_, uint64_t limit, int *gone, int *left, int *left_req, int *transient, int *dead, uint32_t *lead) {
     if (id_ <= 0) return 0;
     if (samp) return id_ < g_nsreg && g_sreg_ok[id_] && samp_fast(id_) ? g_srid[id_] : 0;
@@ -12206,6 +12207,7 @@ static uint64_t pool_entry(int samp, int dtt, int id_, uint64_t limit, int *gone
     const treg_t *r = &g_treg[id_];
     if (r->gone) { ++*gone; return 0; }
     if (!r->view && !tex_storage_live(&r->t)) { ++*gone; *dead = 1; return 0; }
+    if (r->retired && !r->view && pool_skip_retired()) { g_pool_skipped++; return 0; }   // a finalized texture's ID: the dummy, not its texture made again (pool_skip_retired, PR #1393)
     if (!r->view && pool_unwritten_target(&r->t)) return 0;   // dummy until a pass writes it (its new texture is noted: own_note)
     if (!r->view && r->t.d.target != NVN_TEXTURE_TARGET_BUFFER && pool_tex_size(&r->t) > limit && !pkg_shared(&r->t) && !tex_get(r->t.serial) && !(pool_seen(id_) && g_walk_req < POOL_REQ_BYTES)) { ++*left; *left_req += pool_seen(id_); return pool_stand(id_, dtt); }   // BUFFER is a live view, with no upload for this budget to defer
     if (r->tt1 && r->tt1 - 1 != dtt && !(pool_bridge_pair(r->tt1 - 1, dtt) && pool_seen_t(id_, dtt))) { pool_type_note(id_, r->tt1 - 1, dtt); return 0; }   // an ID of another texture type, seen before (the table holds only its own type, or a view of an ID read through it: pool_fit): nothing to look up or charge (the idea is from PR 1428)
@@ -12222,6 +12224,12 @@ static uint64_t pool_entry(int samp, int dtt, int id_, uint64_t limit, int *gone
     if (g_treg[id_].retired && g_treg[id_].transient_sub == g_sub_serial) *transient = 1;
     return tr;
 }
+// Profile key pool_skip_retired (DM_NVN_POOL_SKIP_RETIRED=1 / 0 overrides it): an ID whose texture the game has finalized (retired) and that holds no view gets the dummy in a pool
+// table, rather than a Metal texture made again from its storage. The walk covers every registered ID (Ocarina of Time: about 33,000 in its texture pool), and at a scene change the
+// game finalizes the old scene's textures and leaves their IDs registered: each rebuild made them again, 1,500 textures and 2.5 GB held only through retired IDs, as much again in
+// deferred release, and GPU memory passed Metal's working set. A key, not the default: on the console a handle to a finalized texture still reads its storage while that is there
+static int g_pool_skip_retired = -1;   // -1: not read yet (t_pool_retired sets it)
+static int pool_skip_retired(void) { int v = g_pool_skip_retired; if (v < 0) { const char *e = getenv("DM_NVN_POOL_SKIP_RETIRED"); v = e ? atoi(e) != 0 : DM_GAME_POOL_SKIP_RETIRED; if (v) MLOG("pool_skip_retired: pool tables give retired texture IDs without a view the dummy"); g_pool_skip_retired = v; } return v; }
 static uint64_t pool_walk(int samp, int dtt, int dpf, int base, __unsafe_unretained id<MTLBuffer> *out);
 static uint64_t pool_gpu(int samp, int dtt, int dpf, int base, __unsafe_unretained id<MTLBuffer> *out) {   // what it resolves is not a use (g_pool_walk)
     g_pool_walk = 1; uint64_t r = pool_walk(samp, dtt, dpf, base, out); g_pool_walk = 0; return r;
