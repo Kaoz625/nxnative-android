@@ -160,6 +160,8 @@ LD=$(python3 -c 'import json, sys; print(next((s["default"] for s in json.load(o
 if [ -n "$LD" ] && [ "$LD" != "$DM_LANG" ]; then t "game language: the game has no $DM_LANG; packing $LD, its first"; export DM_LANG=$LD; fi
 # Diagnostic build: DM_ENV_FILE=file → dm/env.txt in the bundle (main.m sets one environment variable per line at boot)
 if [ -n "${DM_ENV_FILE:-}" ]; then cp "$DM_ENV_FILE" Gen/dm/env.txt || die "copy DM_ENV_FILE"; t "env: $(grep -v '^#' "$DM_ENV_FILE" | tr '\n' ' ')"; fi
+# blz: BLZ_DATA_FILE=file -> dm/blz_data.txt in the bundle (URL, size, optional offset of the game file image: blz_data_download.h)
+rm -f Gen/dm/blz_data.txt; if [ -n "${BLZ_DATA_FILE:-}" ]; then cp "$BLZ_DATA_FILE" Gen/dm/blz_data.txt || die "copy BLZ_DATA_FILE"; t "data download: $(grep -v '^#' "$BLZ_DATA_FILE" | tr '\n' ' ')"; fi
 # The shader libraries go into the archive as DmIOS.app/msl/<folder>, or an NVN game's as the file DmIOS.app/msl/<folder>.img (main.m sets DM_MSL_DIR to msl)
 if [ "$GFXAPI" = vulkan ]; then MSLDIR=vk; elif [ "$GFXAPI" = gl ]; then MSLDIR=gl; else MSLDIR=b-$V; fi
 # Shared-font stand-ins, one per type (make_shared_fonts.py, about 7 s: unhinted cuts of STD_FONT, by default macOS's Arial Unicode, which iOS lacks, and the button icons; needs fontTools,
