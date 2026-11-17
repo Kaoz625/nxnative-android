@@ -107,6 +107,15 @@ static int g_classic_ok, g_classic;   // mtl_device_classic was asked / the devi
 static dispatch_queue_t g_feedback_q;
 static _Atomic uint32_t g_present_qos;
 #define ALLOC_MAX 8
+// Memory-lean switches (17 Nov 2026, from the cut list of the 2 GB Apple TV Ocarina of Time build, r/decomps): defaults unchanged. DM_NVN_MEM_LEAN=1 turns all three to the lean value,
+// each one alone overrides it: DM_NVN_UP_BLOCK_MB (upload staging block, 32 -> 8), DM_NVN_UP_BATCH_MB (overflow staging per upload batch, 128 -> 16), DM_NVN_ALLOC_MAX (main command allocators, 8 -> 2)
+static int lean_get(const char *name, int dflt, int lean, int lo, int hi) {
+    static int lean_on = -1; if (lean_on < 0) { const char *e = getenv("DM_NVN_MEM_LEAN"); lean_on = e && atoi(e) > 0; }
+    const char *e = getenv(name); int v = e && *e ? atoi(e) : lean_on ? lean : dflt; if (v < lo) v = lo; if (v > hi) v = hi;
+    if (v != dflt) MLOG("memory-lean switch: %s = %d (default %d)", name, v, dflt);
+    return v;
+}
+static int alloc_cap(void) { static int v; if (!v) v = lean_get("DM_NVN_ALLOC_MAX", ALLOC_MAX, 2, 2, ALLOC_MAX); return v; }
 enum { ALLOC_SHARE = 64 };   // submissions one allocator serves before the next takes another (see g_alloc_fence)
 // The most submissions mtl_sub_begin lets stand uncompleted: ALLOC_MAX allocators of ALLOC_SHARE submissions each. It sizes what is held per submission in flight (POST_RING, VIS_RING)
 enum { SUB_FLIGHT_MAX = ALLOC_MAX * ALLOC_SHARE };
@@ -812,6 +821,7 @@ void mtl_init(void) {
         pad.label = [NSString stringWithFormat:@"nvn-mtl present allocator %d", i];
         g_present_alloc4[i] = [g_dev newCommandAllocatorWithDescriptor:pad error:&ae];
         if (!g_present_alloc4[i]) MDIE("failed to create present MTL4CommandAllocator[%d]: %s", i, ae.localizedDescription.UTF8String);
+        if (i == 2 && alloc_cap() < 3) g_alloc_n = alloc_cap();   // DM_NVN_ALLOC_MAX=2: the main ring uses two (the third object stays empty; an allocator holds memory only once used)
         g_present_cb[i] = [g_dev newCommandBuffer];
         if (!g_present_cb[i]) MDIE("failed to create present MTL4CommandBuffer[%d]", i);
     }
@@ -1601,7 +1611,7 @@ void mtl_sub_begin(void) {
     int alloc_share = g_alloc_used && g_alloc_frame == alloc_frame && g_alloc_shared < ALLOC_SHARE && allocprof_level() != 2;
     if (alloc_share) alloc_i = g_alloc_cur;
     for (int i = 0; alloc_i < 0 && i < g_alloc_n; i++) if (g_alloc_fence[i] <= done) { alloc_i = i; break; }
-    if (alloc_i < 0 && g_alloc_n < ALLOC_MAX) { NSError *ae = nil; MTL4CommandAllocatorDescriptor *ad = [MTL4CommandAllocatorDescriptor new];
+    if (alloc_i < 0 && g_alloc_n < alloc_cap()) { NSError *ae = nil; MTL4CommandAllocatorDescriptor *ad = [MTL4CommandAllocatorDescriptor new];
         g_alloc4[g_alloc_n] = [g_dev newCommandAllocatorWithDescriptor:ad error:&ae]; if (!g_alloc4[g_alloc_n]) MDIE("failed to create a new MTL4CommandAllocator: %s", ae.localizedDescription.UTF8String);
         alloc_i = g_alloc_n++; g_alloc_grown++; }
     if (alloc_i < 0) { alloc_i = 0; for (int i = 1; i < g_alloc_n; i++) if (g_alloc_fence[i] < g_alloc_fence[alloc_i]) alloc_i = i; g_alloc_waits++; mtl_wait_at(g_alloc_fence[alloc_i], UINT64_MAX, WS_ALLOC); }
@@ -3169,7 +3179,8 @@ static void up_wait_zero(_Atomic int *v, int site) {
     if (ws_on()) ws_put(site, w0, 1);
 }
 static unsigned g_up_seq;
-#define UP_BLOCK_SIZE (32u * 1024u * 1024u)
+static size_t up_block_size(void) { static size_t v; if (!v) v = (size_t)lean_get("DM_NVN_UP_BLOCK_MB", 32, 8, 4, 64) << 20; return v; }
+#define UP_BLOCK_SIZE up_block_size()
 // Each upload slot keeps its staging resident until its next batch (up_begin waits for the previous batch). Grow the first block to the slot's previous batch demand, not just its first texture:
 // a small first texture followed by a large one otherwise allocates and retires a fresh 32 MB overflow every frame. Keep one overflow as well, at most 64 MB per slot / 192 MB across all three.
 // Bursts beyond that budget and individual uploads larger than UP_BLOCK_SIZE still use temporary blocks, retired only after their GPU work. DM_NVN_UPLOAD_REUSE=0 keeps the original one-block policy.
@@ -3196,7 +3207,8 @@ static NSMutableArray *g_up_keep;
 // batches; up_begin publishes queued commits before waiting for a slot. A single
 // texture larger than the budget gets its own block (uploads are not tiled here).
 static size_t g_up_staging_bytes;
-#define UP_BATCH_BYTES (128u * 1024u * 1024u)
+static size_t up_batch_bytes(void) { static size_t v; if (!v) v = (size_t)lean_get("DM_NVN_UP_BATCH_MB", 128, 16, 8, 512) << 20; return v; }
+#define UP_BATCH_BYTES up_batch_bytes()
 
 
 // The upload command buffer was discarded by the system (dropped along during GPU error recovery; the first frame on entering Travincal drops one every run): the objects of this batch of textures are built and the timestamps updated, but the content was never written in,
