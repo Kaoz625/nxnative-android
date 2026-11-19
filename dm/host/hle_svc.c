@@ -157,6 +157,14 @@ static double guest_file_free_important(void) {
 // (saves, Metal's shader cache, the system's own files). The room counts f_bavail first; only when that is short does it ask for the free space with what the system can purge
 // (guest_file_free_important, at most every 10 s), and goes on on that while f_bavail's own room stays above half the minimum, since the system purges only as the disk fills.
 // Every 10th second one line, [RED] with under a gigabyte to the minimum: what the disk cost so far and the footprint's parts
+// blz (claude-iphone-switch-3, 19 Nov): the whole device's memory as the kernel counts it (host_statistics64), so a log shows memory another process holds:
+// on an 8 GB iPhone 4.9-6.2 GB stayed WIRED with no game running after killed test runs (JetsamEvent reports), and every game start then died of vm-pageshortage
+static void sys_vm_line(char *out, size_t n) {
+    vm_statistics64_data_t v; mach_msg_type_number_t c = HOST_VM_INFO64_COUNT; vm_size_t pg = 0; const double G = 1073741824.0;
+    if (host_page_size(mach_host_self(), &pg) != KERN_SUCCESS || host_statistics64(mach_host_self(), HOST_VM_INFO64, (host_info64_t)&v, &c) != KERN_SUCCESS) { snprintf(out, n, "device memory unknown"); return; }
+    snprintf(out, n, "device: wired %.2f GB, free %.2f GB, active %.2f, inactive %.2f, compressed %.2f, file-backed %.2f", v.wire_count * (double)pg / G, v.free_count * (double)pg / G,
+             v.active_count * (double)pg / G, v.inactive_count * (double)pg / G, v.compressor_page_count * (double)pg / G, v.external_page_count * (double)pg / G);
+}
 static void *guest_file_thread(void *arg) {
     (void)arg; const double G = 1073741824.0; size_t pg = (size_t)getpagesize(); char *vec = malloc(g_reserve / pg + 1);
     const char *sc = getenv("DM_GUEST_FILE_SCAN"); int scan = sc && atoi(sc) > 0, purge_told = 0;
@@ -188,12 +196,13 @@ static void *guest_file_thread(void *arg) {
         if (scan && vec && dirty >= 0 && sec % 30 == 0) guest_file_scan(vec, pg);
         for (int i = 0; i < g_gf_n; i++) if (!fstat(g_gf_tab[i], &st)) held += st.st_blocks * 512.0;
         int ru_ok = !proc_pid_rusage(getpid(), RUSAGE_INFO_V4, (rusage_info_t *)&ru);
+        char sysm[200]; sys_vm_line(sysm, sizeof sysm);
         if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &n) != KERN_SUCCESS) memset(&vi, 0, sizeof vi);
         LOG("%s[mem] guest file: %.2f GB allocated on disk, %.2f GB dirty in memory (%.0f ms to count, every 10 s), %.2f GB given back as holes; process read %.2f GB, %llu page-ins, logical writes %.2f GB; "
-            "footprint %.2f GB (internal %.2f, compressed %.2f, peak so far %.2f), file pages mapped (external) %.2f GB; %.1f GB free on its disk (%.1f with what the system can purge)",
+            "footprint %.2f GB (internal %.2f, compressed %.2f, peak so far %.2f), file pages mapped (external) %.2f GB; %.1f GB free on its disk (%.1f with what the system can purge); %s",
             g_gf_min_free && fs_ok && (imp > avail ? imp : avail) - need < g_gf_min_free + G ? "[RED] " : "", held / G, dirty / G, count_ms, atomic_load(&g_gf_punched) / G,
             ru_ok ? ru.ri_diskio_bytesread / G : -1, ru_ok ? (unsigned long long)ru.ri_pageins : 0ull,
-            ru_ok ? ru.ri_logical_writes / G : -1, vi.phys_footprint / G, vi.internal / G, vi.compressed / G, ru_ok ? ru.ri_lifetime_max_phys_footprint / G : -1, vi.external / G, avail / G, imp / G);
+            ru_ok ? ru.ri_logical_writes / G : -1, vi.phys_footprint / G, vi.internal / G, vi.compressed / G, ru_ok ? ru.ri_lifetime_max_phys_footprint / G : -1, vi.external / G, avail / G, imp / G, sysm);
     }
     return NULL;
 }
@@ -284,6 +293,7 @@ static void guest_file_init(void) {
 #if TARGET_OS_IPHONE
     uint64_t room = os_proc_available_memory(), host = guest_host_margin(DM_GAME_APP_POOL);
     int want = guest_file_wanted(e, DM_GAME_APP_POOL, host, room);
+    { char sysm[200]; sys_vm_line(sysm, sizeof sysm); LOG("[mem] at start, %s", sysm); }
     LOG("[mem] guest memory: memory pool %.2f GB and the host's margin %.2f GB (%s), room to the memory limit %.2f GB, DM_GUEST_FILE %s: %s", DM_GAME_APP_POOL / G, host / G,
         getenv("DM_GUEST_FILE_HOST") && *getenv("DM_GUEST_FILE_HOST") ? "DM_GUEST_FILE_HOST" : "half the pool", room / G, e && *e ? e : "unset", want ? "in files" : "anonymous");
 #else
