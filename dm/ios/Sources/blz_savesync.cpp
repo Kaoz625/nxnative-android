@@ -514,7 +514,24 @@ void OnBackground() {
 // blz (claude-iphone-switch-4, 24 Nov 2026): C entry points for the nxnative iOS app (main.m). The game and its synced files come from
 // the build's env file: BLZ_SAVESYNC_GAME=<savesync store game> (unset = off), BLZ_SAVESYNC_INCLUDE=<comma list, folders end in />,
 // optional BLZ_SAVESYNC_DEVICE (iphone-15pm), BLZ_SAVESYNC_HOST (mac1 tailnet), BLZ_SAVESYNC_PORT. Root = DM_SAVE (Documents/save).
-extern "C" void blz_savesync_start(const char* save_root) {
+// seed_dir: a copy of the store's save baked into the app (dm/save-seed): used ONLY when, after the launch sync, there is still no
+// save in scope (a fresh install that could not reach the store), so a first start without network still begins from his save.
+static void blz_seed_if_empty(const char* seed_dir) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  if (!seed_dir || !fs::is_directory(seed_dir, ec)) return;
+  if (!blz_savesync::ReadTree().empty()) return;
+  int n = 0;
+  for (auto it = fs::recursive_directory_iterator(seed_dir, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+    if (!it->is_regular_file(ec)) continue;
+    fs::path rel = it->path().lexically_relative(seed_dir), dst = blz_savesync::g_cfg.root / rel;
+    fs::create_directories(dst.parent_path(), ec);
+    if (fs::copy_file(it->path(), dst, fs::copy_options::overwrite_existing, ec)) n++;
+  }
+  blz_savesync::Log("launch: no save and no store - started from the save baked into the app (%d files, dm/save-seed)", n);
+  fprintf(stderr, "boot: save sync: no save and no store reachable - %d files from the save baked into the app\n", n);
+}
+extern "C" void blz_savesync_start(const char* save_root, const char* seed_dir) {
   const char* game = getenv("BLZ_SAVESYNC_GAME");
   if (!game || !*game || !save_root) return;
   blz_savesync::Config c;
@@ -530,5 +547,6 @@ extern "C" void blz_savesync_start(const char* save_root) {
   if (c.include.empty()) return;
   fprintf(stderr, "boot: save sync with the savesync store: game %s, device %s, %zu entries (log Documents/savesync.log)\n", game, c.device.c_str(), c.include.size());
   blz_savesync::Start(std::move(c));
+  blz_seed_if_empty(seed_dir);
 }
 extern "C" void blz_savesync_background(void) { blz_savesync::OnBackground(); }
