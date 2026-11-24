@@ -194,7 +194,7 @@ static int boot_env(void) {
     NSString *dm = program_env();
     if (!dm) { romfs_identity_report(doc); fprintf(stderr, "boot: game files not found (Documents/romfs.img, Documents/romfs or <App>/romfs)\n"); return 0; }
     setenv("DM_SAVE", [doc stringByAppendingPathComponent:@"save"].fileSystemRepresentation, 0);
-    { extern void blz_savesync_start(const char *); blz_savesync_start(getenv("DM_SAVE")); }   // blz: wireless save sync with the savesync store before the game reads its save (blz_savesync.cpp, BLZ_SAVESYNC_* in env.txt)
+    { extern void blz_savesync_start(const char *, const char *); blz_savesync_start(getenv("DM_SAVE"), [[res stringByAppendingPathComponent:@"dm"] stringByAppendingPathComponent:@"save-seed"].fileSystemRepresentation); }   // blz: wireless save sync with the savesync store before the game reads its save (blz_savesync.cpp, BLZ_SAVESYNC_* in env.txt)
     setenv("DM_TEMP", [doc stringByAppendingPathComponent:@"temp"].fileSystemRepresentation, 0);
     setenv("DM_ALBUM_DIR", [doc stringByAppendingPathComponent:@"album"].fileSystemRepresentation, 0);   // local album screenshots (hle_album.c), visible in Files; created lazily on first save
     setenv("DM_SYSTEM_DIR", [doc stringByAppendingPathComponent:@"system"].fileSystemRepresentation, 0);
