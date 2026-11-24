@@ -194,6 +194,7 @@ static int boot_env(void) {
     NSString *dm = program_env();
     if (!dm) { romfs_identity_report(doc); fprintf(stderr, "boot: game files not found (Documents/romfs.img, Documents/romfs or <App>/romfs)\n"); return 0; }
     setenv("DM_SAVE", [doc stringByAppendingPathComponent:@"save"].fileSystemRepresentation, 0);
+    { extern void blz_savesync_start(const char *); blz_savesync_start(getenv("DM_SAVE")); }   // blz: wireless save sync with the savesync store before the game reads its save (blz_savesync.cpp, BLZ_SAVESYNC_* in env.txt)
     setenv("DM_TEMP", [doc stringByAppendingPathComponent:@"temp"].fileSystemRepresentation, 0);
     setenv("DM_ALBUM_DIR", [doc stringByAppendingPathComponent:@"album"].fileSystemRepresentation, 0);   // local album screenshots (hle_album.c), visible in Files; created lazily on first save
     setenv("DM_SYSTEM_DIR", [doc stringByAppendingPathComponent:@"system"].fileSystemRepresentation, 0);
@@ -301,7 +302,7 @@ static int boot_env(void);
     [self.window makeKeyAndVisible];
 }
 - (void)sceneWillResignActive:(UIScene *)s { front_ios_focus_event(0); }
-- (void)sceneDidEnterBackground:(UIScene *)s { front_ios_focus_event(1); }
+- (void)sceneDidEnterBackground:(UIScene *)s { front_ios_focus_event(1); extern void blz_savesync_background(void); blz_savesync_background(); }   // blz: a changed save goes to the store now (at most ~3 s)
 - (void)sceneWillEnterForeground:(UIScene *)s { front_ios_focus_event(2); }
 - (void)sceneDidBecomeActive:(UIScene *)s { front_ios_focus_event(3); }
 @end
